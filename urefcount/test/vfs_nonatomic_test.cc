@@ -1,7 +1,9 @@
-#include "virtual_file_nonatomic.h"
 #include <fcntl.h>
 #include <gtest/gtest.h>
 #include <stdio.h>
+#include <thread>
+#include <vector>
+#include "virtual_file_nonatomic.h"
 
 class VFSNonatomicTest : public testing::Test {
  protected:
@@ -57,7 +59,7 @@ TEST_F(VFSNonatomicTest, FileReadBlock) {
 };
 
 TEST_F(VFSNonatomicTest, FileReadHalf) {
-  virtual_file *file = new virtual_file(path);
+  virtual_file *file = new virtual_file_nonatomic(path);
   char buffer[BLOCK_SIZE / 2];
   memset(buffer, 0, BLOCK_SIZE / 2);
   file->read(buffer, BLOCK_SIZE / 2, 0);
@@ -77,5 +79,67 @@ TEST_F(VFSNonatomicTest, FileReadHalf) {
   memset(buffer, 0, BLOCK_SIZE / 2);
   file->read(buffer, BLOCK_SIZE / 2, BLOCK_SIZE / 2 * 5);
   ASSERT_STREQ(buffer, "192021");
+  delete file;
+};
+
+TEST_F(VFSNonatomicTest, DRBMQuery) {
+  virtual_file *file = new virtual_file_nonatomic(path);
+  std::vector<std::thread> threads;
+  constexpr long NTHREADS = 10;
+  constexpr int NITERS = 1000;
+
+  // Multi Readers
+  for (long i = 0; i < NTHREADS; i++) {
+    threads.emplace_back(
+        [file](long id) {
+          char buffer[BLOCK_SIZE];
+          memset(buffer, 0, BLOCK_SIZE);
+          size_t capacity = file->get_capacity();
+          for (int i = 0; i < NITERS; i++) {
+            for (off_t bn = 0; bn < capacity; bn++) {
+              file->read(buffer, BLOCK_SIZE, bn * BLOCK_SIZE);
+            }
+          }
+        },
+        i);
+  }
+  for (auto &th : threads) {
+    th.join();
+  }
+
+  // Verify query
+  size_t capacity = file->get_capacity();
+  for (off_t bn = 0; bn < capacity; bn++) {
+    EXPECT_EQ(0, file->query(bn));
+  }
+
+  delete file;
+};
+
+TEST_F(VFSNonatomicTest, DRBHQuery) {
+  virtual_file *file = new virtual_file_nonatomic(path);
+  std::vector<std::thread> threads;
+  constexpr long NTHREADS = 10;
+  constexpr int NITERS = 1000;
+
+  // Multi Readers
+  for (long i = 0; i < NTHREADS; i++) {
+    threads.emplace_back(
+        [file](long id) {
+          char buffer[BLOCK_SIZE];
+          memset(buffer, 0, BLOCK_SIZE);
+          for (int i = 0; i < NITERS; i++) {
+            file->read(buffer, BLOCK_SIZE, 0);
+          }
+        },
+        i);
+  }
+  for (auto &th : threads) {
+    th.join();
+  }
+
+  // Verify query
+  EXPECT_EQ(0, file->query(0));
+
   delete file;
 };

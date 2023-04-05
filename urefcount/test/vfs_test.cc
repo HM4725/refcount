@@ -1,6 +1,8 @@
 #include <fcntl.h>
 #include <gtest/gtest.h>
 #include <stdio.h>
+#include <thread>
+#include <vector>
 #include "virtual_file.h"
 
 class VFSTest : public testing::Test {
@@ -77,5 +79,105 @@ TEST_F(VFSTest, FileReadHalf) {
   memset(buffer, 0, BLOCK_SIZE / 2);
   file->read(buffer, BLOCK_SIZE / 2, BLOCK_SIZE / 2 * 5);
   ASSERT_STREQ(buffer, "192021");
+  delete file;
+};
+
+TEST_F(VFSTest, DRBM) {
+  virtual_file *file = new virtual_file(path);
+  std::vector<std::thread> threads;
+  constexpr long NTHREADS = 10;
+
+  // Multi Readers
+  for (long i = 0; i < NTHREADS; i++) {
+    threads.emplace_back(
+        [file](long id) {
+          char buffer[BLOCK_SIZE];
+          memset(buffer, 0, BLOCK_SIZE);
+          size_t capacity = file->get_capacity();
+          for (off_t bn = 0; bn < capacity; bn++) {
+            file->read(buffer, BLOCK_SIZE, bn * BLOCK_SIZE);
+            switch (bn) {
+              case 0:
+                ASSERT_STREQ(buffer, "01234");
+                break;
+              case 1:
+                ASSERT_STREQ(buffer, "101112");
+                break;
+              case 2:
+                ASSERT_STREQ(buffer, "161718");
+                break;
+              default:
+                break;
+            }
+          }
+        },
+        i);
+  }
+  for (auto &th : threads) {
+    th.join();
+  }
+
+  delete file;
+};
+
+TEST_F(VFSTest, DRBMQuery) {
+  virtual_file *file = new virtual_file(path);
+  std::vector<std::thread> threads;
+  constexpr long NTHREADS = 10;
+  constexpr int NITERS = 1000;
+
+  // Multi Readers
+  for (long i = 0; i < NTHREADS; i++) {
+    threads.emplace_back(
+        [file](long id) {
+          char buffer[BLOCK_SIZE];
+          memset(buffer, 0, BLOCK_SIZE);
+          size_t capacity = file->get_capacity();
+          for (int i = 0; i < NITERS; i++) {
+            for (off_t bn = 0; bn < capacity; bn++) {
+              file->read(buffer, BLOCK_SIZE, bn * BLOCK_SIZE);
+            }
+          }
+        },
+        i);
+  }
+  for (auto &th : threads) {
+    th.join();
+  }
+
+  // Verify query
+  size_t capacity = file->get_capacity();
+  for (off_t bn = 0; bn < capacity; bn++) {
+    EXPECT_EQ(0, file->query(bn));
+  }
+
+  delete file;
+};
+
+TEST_F(VFSTest, DRBHQuery) {
+  virtual_file *file = new virtual_file(path);
+  std::vector<std::thread> threads;
+  constexpr long NTHREADS = 10;
+  constexpr int NITERS = 1000;
+
+  // Multi Readers
+  for (long i = 0; i < NTHREADS; i++) {
+    threads.emplace_back(
+        [file](long id) {
+          char buffer[BLOCK_SIZE];
+          memset(buffer, 0, BLOCK_SIZE);
+          for (int i = 0; i < NITERS; i++) {
+            file->read(buffer, BLOCK_SIZE, 0);
+          }
+        },
+        i);
+  }
+  for (auto &th : threads) {
+    th.join();
+  }
+
+  // Verify query
+  EXPECT_EQ(0, file->query(0));
+
   delete file;
 };
