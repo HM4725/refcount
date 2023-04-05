@@ -15,7 +15,7 @@ set(VFS_HEADERS
   ${VFS_HEADER_DIR}/virtual_file_nonatomic.h
   ${VFS_HEADER_DIR}/virtual_file_noop.h
   
-	${VFS_HEADER_DIR}/hash_table.h
+	${VFS_HEADER_DIR}/ds/hash_table.h
   )
 
 add_library(vfs STATIC ${VFS_HEADERS} ${VFS_SOURCES})
