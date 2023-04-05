@@ -11,7 +11,8 @@ set(VFS_TESTS
   vfs_test.cc
   vfs_nonatomic_test.cc
   vfs_noop_test.cc
-  )
+  hash_table_test.cc
+	)
 
 add_executable(vfs_test ${VFS_TESTS})
 
