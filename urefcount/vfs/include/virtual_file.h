@@ -17,6 +17,7 @@ class virtual_file {
   };
   // Private Fields
   int fd;
+  size_t capacity;  // The number of blocks
   struct block *cache;
   // Private Methods
   ssize_t read_block(void *buf, size_t nbytes, off_t offset);
@@ -30,7 +31,6 @@ class virtual_file {
     page(): _refcount(0), cached(false) {}
   };
   // Protected Fields
-  size_t capacity;  // The number of blocks
   struct page *pages;
   // Protected Methods
   virtual int ref(off_t bn);
@@ -40,6 +40,7 @@ class virtual_file {
   // Public Methods
   virtual_file(const char *fname);
   ~virtual_file();
+  size_t get_capacity() const;
   ssize_t read(void *buf, size_t nbytes, off_t offset);
   virtual int query(off_t bn);
 };

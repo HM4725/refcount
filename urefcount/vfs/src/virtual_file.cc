@@ -66,6 +66,10 @@ ssize_t virtual_file::read_block(void *buf, size_t nbytes, off_t offset) {
   return nbytes;
 }
 
+size_t virtual_file::get_capacity() const {
+  return this->capacity;
+}
+
 int virtual_file::ref(off_t bn) {
   int old = __sync_fetch_and_add(&this->pages[bn]._refcount, 1);
   return old;
