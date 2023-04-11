@@ -15,6 +15,8 @@ set(VFS_HEADERS
   ${VFS_HEADER_DIR}/virtual_file_nonatomic.h
   ${VFS_HEADER_DIR}/virtual_file_noop.h
   
+  ${VFS_HEADER_DIR}/cpu.h
+  
 	${VFS_HEADER_DIR}/ds/hash_table.h
   )
 

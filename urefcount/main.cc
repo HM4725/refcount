@@ -1,12 +1,12 @@
 #include <pthread.h>
-#include <thread>
 #include <stdio.h>
 #include <unistd.h>
+#include <thread>
+#include "cpu.h"
 #include "virtual_file.h"
 
 #define THREADS_BOUND 128
 #define VIRTUAL_FILE_TYPE virtual_file
-
 /**
  * Controller
  */
@@ -42,6 +42,7 @@ void *routine_reader(void *arg) {
   long id = (long)arg;
   long iter = 0;
   char buffer[BLOCK_SIZE];
+  set_cpuid(id);
 
   controller.ready[id] = true;
   while (controller.start == false)
@@ -71,7 +72,7 @@ int main() {
   fprintf(log, "N,iters\n");
   file = new VIRTUAL_FILE_TYPE(file_path);
 
-  for (int n = 1; n < NCORES; n++) {
+  for (int n = 1; n <= NCORES; n++) {
     controller.clear();
     for (long i = 0; i < n; i++) {
       pthread_create(&threads[i], NULL, routine_reader, (void *)i);
