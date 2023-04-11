@@ -4,6 +4,7 @@ set(VFS_SOURCES
   ${VFS_SOURCE_DIR}/virtual_file.cc
   ${VFS_SOURCE_DIR}/virtual_file_nonatomic.cc
   ${VFS_SOURCE_DIR}/virtual_file_noop.cc
+  ${VFS_SOURCE_DIR}/virtual_file_cache_affinity.cc
   
 	${VFS_SOURCE_DIR}/hash_table.cc
   )
@@ -14,6 +15,7 @@ set(VFS_HEADERS
   ${VFS_HEADER_DIR}/virtual_file.h
   ${VFS_HEADER_DIR}/virtual_file_nonatomic.h
   ${VFS_HEADER_DIR}/virtual_file_noop.h
+  ${VFS_HEADER_DIR}/virtual_file_cache_affinity.h
   
   ${VFS_HEADER_DIR}/cpu.h
   

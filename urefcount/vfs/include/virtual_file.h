@@ -39,7 +39,7 @@ class virtual_file {
  public:
   // Public Methods
   virtual_file(const char *fname);
-  ~virtual_file();
+  virtual ~virtual_file();
   size_t get_capacity() const;
   ssize_t read(void *buf, size_t nbytes, off_t offset);
   virtual int query(off_t bn);
