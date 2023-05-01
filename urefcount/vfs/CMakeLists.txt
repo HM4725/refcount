@@ -5,8 +5,6 @@ set(VFS_SOURCES
   ${VFS_SOURCE_DIR}/virtual_file_nonatomic.cc
   ${VFS_SOURCE_DIR}/virtual_file_noop.cc
   ${VFS_SOURCE_DIR}/virtual_file_cache_affinity.cc
-  
-	${VFS_SOURCE_DIR}/hash_table.cc
   )
 
 # Headers
@@ -18,8 +16,6 @@ set(VFS_HEADERS
   ${VFS_HEADER_DIR}/virtual_file_cache_affinity.h
   
   ${VFS_HEADER_DIR}/cpu.h
-  
-	${VFS_HEADER_DIR}/ds/hash_table.h
   )
 
 add_library(vfs STATIC ${VFS_HEADERS} ${VFS_SOURCES})
