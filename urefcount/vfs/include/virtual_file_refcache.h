@@ -2,19 +2,56 @@
 #define __VIRTUAL_FILE_REFCACHE_H__
 
 #include "virtual_file.h"
+#include <climits>
+#include <list>
 
 class virtual_file_refcache : public virtual_file {
  private:
   static constexpr size_t CACHE_SLOTS = 4096;
   struct alignas(CACHE_LINE_SIZE) core {
     long local_epoch;
+    std::list<page *> review_list;
+    std::list<page *> reap_list;
+
     struct way {
       page *obj;
       int delta;
     } ways[CACHE_SLOTS];
+
+    way *hash_way(page *obj) {
+      unsigned long wayno = (unsigned long)obj;
+      wayno ^= (wayno >> 32) ^ (wayno >> 20) ^ (wayno >> 12);
+      wayno ^= (wayno >> 7) ^ (wayno >> 4);
+      wayno %= CACHE_SLOTS;
+      struct way *way = &ways[wayno];
+
+      return way;
+    }
+
+    way *get_way(page *obj) {
+      struct way *way = hash_way(obj);
+      if (way->obj != obj) {
+        if(way->obj) {
+          evict(way, false);
+        }
+        way->obj = obj;
+      }
+      if (way->delta == INT_MAX || way->delta == INT_MIN) {
+        evict(way, false);
+        way->obj = obj;
+      }
+      return way;
+    }
+
+    void evict(struct way *way, bool local_epoch_is_exact);
+
+    void flush();
+
+    void review();
+
   };
-  long global_epoch;         // atomic?
-  size_t global_epoch_left;  // atomic
+  // long global_epoch;         // atomic?
+  // size_t global_epoch_left;  // atomic
   core *cores;
   int ncores;
 

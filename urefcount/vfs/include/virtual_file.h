@@ -28,7 +28,10 @@ class virtual_file {
   struct alignas(CACHE_LINE_SIZE) page {
     volatile int _refcount;
     bool cached;
-    page(): _refcount(0), cached(false) {}
+
+    bool dirty;
+    long review_epoch;
+    page(): _refcount(0), cached(false), dirty(true), review_epoch(0) {}
   };
   // Protected Fields
   struct page *pages;
