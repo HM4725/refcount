@@ -3,10 +3,15 @@
 #include <unistd.h>
 #include <thread>
 #include "cpu.h"
-#include "virtual_file.h"
-
+// #include "virtual_file.h"
+// #include "virtual_file_cache_affinity.h"
+#include "virtual_file_refcache.h"
 #define THREADS_BOUND 128
-#define VIRTUAL_FILE_TYPE virtual_file
+
+// #define VIRTUAL_FILE_TYPE virtual_file
+// #define VIRTUAL_FILE_TYPE virtual_file_cache_affinity
+#define VIRTUAL_FILE_TYPE virtual_file_refcache
+
 /**
  * Controller
  */

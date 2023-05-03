@@ -10,6 +10,7 @@ class virtual_file_refcache : public virtual_file {
   static constexpr size_t CACHE_SLOTS = 4096;
   struct alignas(CACHE_LINE_SIZE) core {
     long local_epoch;
+    size_t NCPU;
     std::list<page *> review_list;
     std::list<page *> reap_list;
 
@@ -61,7 +62,7 @@ class virtual_file_refcache : public virtual_file {
 
  public:
   virtual_file_refcache(const char *path);
-  virtual_file_refcache(const char *path, int ncores = 1);
+  virtual_file_refcache(const char *path, int ncores);
   ~virtual_file_refcache();
   int query(off_t bn) override;
 };

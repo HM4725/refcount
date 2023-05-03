@@ -1,21 +1,33 @@
-#include "virtual_file_refcache.h"
 
-/**
- * lock point 주석 달아놓음. 필요한 곳
-*/
+#include "virtual_file_refcache.h"
+#include <assert.h>
+#include <cpu.h>
+#include <stdlib.h>
+#include "utils.h"
 
 long global_epoch;         // atomic?
 size_t global_epoch_left;  // atomic
 
-virtual_file_refcache::virtual_file_refcache(const char *path) {
-
+virtual_file_refcache::virtual_file_refcache(const char *path)
+    : virtual_file(path), ncores(8) {
+  this->cores = new core[this->ncores];
+  for (int i = 0; i < this->ncores; i++) {
+    this->cores[i].local_epoch = 0;
+    this->cores[i].NCPU = this->ncores;
+  }
 }
-virtual_file_refcache::virtual_file_refcache(const char *path, int ncpu) {
-
+virtual_file_refcache::virtual_file_refcache(const char *path,
+                                                         int ncores)
+    : virtual_file(path), ncores(ncores) {
+  this->cores = new core[this->ncores];
+  for (int i = 0; i < this->ncores; i++) {
+    this->cores[i].local_epoch = 0;
+    this->cores[i].NCPU = this->ncores;    
+  }
 }
 
 virtual_file_refcache::~virtual_file_refcache() {
-
+  delete[] this->cores;  
 }
 
 
@@ -82,6 +94,7 @@ void virtual_file_refcache::core::flush() {
   if (cur_global == local_epoch) {
     return;
   }
+  
   local_epoch = cur_global;
 
   for(int i = 0; i < CACHE_SLOTS; i++) {
@@ -90,9 +103,39 @@ void virtual_file_refcache::core::flush() {
   }
 
   if(--global_epoch_left == 0) {
-    global_epoch_left = ncores;
+    global_epoch_left = NCPU;
     ++global_epoch;
   }
+}
 
+int virtual_file_refcache::ref(off_t bn) {
+  int cpuid = get_cpuid();
+  page *obj = &(this->pages[bn]);
+  auto way = cores[cpuid].get_way(obj);
+  way->delta++;  
+}
+
+int virtual_file_refcache::unref(off_t bn) {
+  int cpuid = get_cpuid();
+  page *obj = &(this->pages[bn]);
+  auto way = cores[cpuid].get_way(obj);
+  way->delta--;  
+}
+
+
+// fake true refcount.
+int virtual_file_refcache::query(off_t bn) {
+
+  int count = 0;  
+  page *obj = &(this->pages[bn]);
+  for (int i = 0; i < ncores; i++) {
+    auto way = cores[i].hash_way(obj);
+    if (way->obj == obj) {
+      count += way->delta;
+    }
+  }
+  count += obj->_refcount;
+
+  return count;
 }
 
