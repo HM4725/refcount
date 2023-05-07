@@ -1,111 +1,125 @@
-#include <pthread.h>
-#include <stdio.h>
-#include <unistd.h>
+#include <cxxabi.h>
+#include <chrono>
+#include <condition_variable>
+#include <fstream>
+#include <iostream>
+#include <mutex>
+#include <numeric>
 #include <thread>
-#include "cpu.h"
-// #include "virtual_file.h"
-// #include "virtual_file_cache_affinity.h"
-#include "virtual_file_refcache.h"
-#define THREADS_BOUND 128
+#include <typeinfo>
+#include "virtual_file_types.h"
 
-// #define VIRTUAL_FILE_TYPE virtual_file
-// #define VIRTUAL_FILE_TYPE virtual_file_cache_affinity
-#define VIRTUAL_FILE_TYPE virtual_file_refcache
+#define DEFAULT_RUNTIME 1
 
 /**
  * Controller
+ * Multi-Producer, Single-Consumer
  */
-struct {
-  bool ready[THREADS_BOUND];
-  bool start;
-  bool stop;
+class Controller {
+ private:
+  int nProducers;
+  int nReady;
+  bool finish;
+  std::mutex m;
+  std::condition_variable producers_cv;
+  std::condition_variable consumer_cv;
 
-  void clear() {
-    for (int i = 0; i < THREADS_BOUND; i++) {
-      this->ready[i] = false;
+ public:
+  // Producers
+  void ready() {
+    std::unique_lock lk(m);
+    nReady += 1;
+    if (nProducers == nReady) {
+      consumer_cv.notify_one();
     }
-    this->start = false;
-    this->stop = false;
+    producers_cv.wait(lk);
+    lk.unlock();
   }
-  bool is_all_ready(int n) {
-    for (int i = 0; i < n; i++) {
-      if (this->ready[i] == false) return false;
-    }
-    return true;
-  }
-} controller;
+  bool work() { return !finish; }
 
-/**
- * Shared file
- */
-virtual_file *file = nullptr;
+  // Consumer
+  void start() {
+    std::unique_lock lk(m);
+    while (nProducers != nReady) {
+      consumer_cv.wait(lk);
+    }
+    lk.unlock();
+    producers_cv.notify_all();
+  }
+  void wait(int time) {
+    std::this_thread::sleep_for(std::chrono::seconds(time));
+  }
+  void stop() { finish = true; }
+
+  Controller() = delete;
+  Controller(int N) : nProducers(N), nReady(0), finish(false) {}
+};
 
 /**
  * Thread routine: DRBH
  */
-void *routine_reader(void *arg) {
-  long id = (long)arg;
-  long iter = 0;
-  char buffer[BLOCK_SIZE];
-  set_cpuid(id);
+template <class T>
+long DRBH(const size_t N, const int time = DEFAULT_RUNTIME) {
+  std::vector<std::thread> threads;
+  Controller controller(N);
+  std::vector<long> res;
+  T file_manager("bench.db");
 
-  controller.ready[id] = true;
-  while (controller.start == false)
-    ;
+  for (long i = 0; i < N; i++) {
+    res.emplace_back(0);
+    threads.emplace_back([&file_manager, &controller, &res]() {
+      int thread_id = file_manager.setup();
+      char buffer[BLOCK_SIZE];
+      long iter = 0;
 
-  while (controller.stop == 0) {
-    file->read(buffer, BLOCK_SIZE, 0);
-    iter += 1;
+      controller.ready();
+
+      while (controller.work()) {
+        file_manager.read(buffer, BLOCK_SIZE, 0);
+        iter += 1;
+      }
+      res[thread_id] = iter;
+    });
   }
 
-  return (void *)iter;
+  controller.start();
+  controller.wait(time);
+  controller.stop();
+  for (auto &th : threads) {
+    th.join();
+  }
+  return std::accumulate(res.begin(), res.end(), 0);
 }
 
 /**
- * Main
+ * Benchmark
  */
-int main() {
-  const char *file_path = "bench.db";
-  const char *log_path = "log.csv";
-  FILE *log = fopen(log_path, "w");
+template <class T>
+void bench(const size_t N, std::ofstream &logger) {
+  int status;
+  char *type_str = abi::__cxa_demangle(typeid(T).name(), NULL, NULL, &status);
+  long throughput = DRBH<T>(N);
+  std::cout << N << ',' << throughput << "," << type_str << std::endl;
+  logger << N << ',' << throughput << "," << type_str << std::endl;
+}
 
-  pthread_t threads[THREADS_BOUND];
-  long thread_returns[THREADS_BOUND];
+int main() {
+  std::ofstream logger;
+  logger.open("log.csv");
+
   const unsigned int NCORES = std::thread::hardware_concurrency();
 
-  fprintf(stdout, "N,iters\n");
-  fprintf(log, "N,iters\n");
-  file = new VIRTUAL_FILE_TYPE(file_path);
+  logger << "N,iters,type" << std::endl;
+  std::cout << "N,iters,type" << std::endl;
 
   for (int n = 1; n <= NCORES; n++) {
-    controller.clear();
-    for (long i = 0; i < n; i++) {
-      pthread_create(&threads[i], NULL, routine_reader, (void *)i);
-    }
-    while (controller.is_all_ready(n) == false)
-      ;
-    controller.start = true;
-    sleep(5);
-    controller.stop = true;
-    for (int i = 0; i < n; i++) {
-      pthread_join(threads[i], (void **)&thread_returns[i]);
-    }
-    fprintf(stdout, "%d", n);
-    fprintf(log, "%d", n);
-
-    long sum = 0;
-    for (int i = 0; i < n; i++) {
-      fprintf(stdout, ",%ld", thread_returns[i]);
-      fprintf(log, ",%ld", thread_returns[i]);
-      sum += thread_returns[i];
-    }
-    fprintf(stdout, " -> %ld\n", sum);
-    fprintf(log, "\n");
+    // bench<virtual_file>(n, logger);
+    // bench<virtual_file_noop>(n, logger);
+    // bench<virtual_file_nonatomic>(n, logger);
+    // bench<virtual_file_cache_affinity>(n, logger);
+    bench<virtual_file_refcache>(n, logger);
   }
-  fprintf(stdout, "_refcount: %d\n", file->query(0));
 
-  fclose(log);
-  delete file;
-  remove(file_path);
+  logger.close();
   return 0;
 }

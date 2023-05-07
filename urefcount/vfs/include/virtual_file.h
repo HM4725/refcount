@@ -1,51 +1,47 @@
-#ifndef __VIRTUAL_FILE_H__
-#define __VIRTUAL_FILE_H__
+#pragma once
 
 #include <sys/types.h>
-#include <string.h>
+#include <atomic>
+#include <mutex>
+#include <vector>
+#include "params.h"
+#include "thread_manager.h"
 
-#define BLOCK_SIZE 4096
-
-class virtual_file {
+class virtual_file : public thread_manager {
  private:
   // Private Types
-  static constexpr size_t BLOCK_SZ = 4096;
-  static constexpr size_t BLOCK_DEFAULT_NUM = 4;
-  struct alignas(BLOCK_SZ) block {
-    char d[BLOCK_SZ];
-    block() { memset(d, 0, BLOCK_SZ); }
+  static constexpr size_t DEFAULT_BLOCK_NUM = 4;
+  struct alignas(BLOCK_SIZE) block {
+    char data[BLOCK_SIZE];
   };
   // Private Fields
   int fd;
-  size_t capacity;  // The number of blocks
-  struct block *cache;
+  std::vector<block> buffer;
   // Private Methods
-  ssize_t read_block(void *buf, size_t nbytes, off_t offset);
+  ssize_t read_block(void* buf, size_t nbytes, off_t offset);
 
  protected:
   // Protected Types
-  static constexpr size_t CACHE_LINE_SIZE = 64;
   struct alignas(CACHE_LINE_SIZE) page {
-    volatile int _refcount;
-    bool cached;
-
+    std::atomic<int> refcount;
+    bool active;
     bool dirty;
-    long review_epoch;
-    page(): _refcount(0), cached(false), dirty(true), review_epoch(0) {}
+    long reserved;
+    std::mutex m;
+    page() : refcount(0), active(false), dirty(false) {}
+    page(page&& p) : refcount(0), active(false), dirty(false) {}
   };
   // Protected Fields
-  struct page *pages;
+  std::vector<page> pages;
   // Protected Methods
   virtual int ref(off_t bn);
   virtual int unref(off_t bn);
 
  public:
   // Public Methods
-  virtual_file(const char *fname);
+  virtual_file(const char* fname);
   virtual ~virtual_file();
   size_t get_capacity() const;
-  ssize_t read(void *buf, size_t nbytes, off_t offset);
+  ssize_t read(void* buf, size_t nbytes, off_t offset);
   virtual int query(off_t bn);
 };
-
-#endif /* __VIRTUAL_FILE_H__ */

@@ -12,6 +12,7 @@ set(VFS_TESTS
   vfs_nonatomic_test.cc
   vfs_noop_test.cc
   vfs_cache_affinity_test.cc
+  vfs_refcache_test.cc
 	)
 
 add_executable(vfs_test ${VFS_TESTS})

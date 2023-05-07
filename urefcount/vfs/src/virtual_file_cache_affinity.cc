@@ -1,45 +1,26 @@
 #include "virtual_file_cache_affinity.h"
-#include <assert.h>
-#include <cpu.h>
-#include <stdlib.h>
 #include "utils.h"
 
-/**
- * @note
- * Space overhead: O(C * N)
- * - C: Number of cores
- * - N: Number of pages
- */
 virtual_file_cache_affinity::virtual_file_cache_affinity(const char *path)
-    : virtual_file(path), ncores(8) {
-  this->cores = new core[this->ncores];
-  size_t space = roundup(this->get_capacity(), this->CACHE_LINE_SIZE);
-  for (int i = 0; i < this->ncores; i++) {
-    this->cores[i].local_refcounts = new int[space]{0};
-  }
-}
-
-/**
- * @note
- * Space overhead: O(C * N)
- * - C: Number of cores
- * - N: Number of pages
- */
-virtual_file_cache_affinity::virtual_file_cache_affinity(const char *path,
-                                                         int ncores)
-    : virtual_file(path), ncores(ncores) {
-  this->cores = new core[this->ncores];
-  size_t space = roundup(this->get_capacity(), this->CACHE_LINE_SIZE);
-  for (int i = 0; i < this->ncores; i++) {
-    this->cores[i].local_refcounts = new int[space]{0};
-  }
-}
+    : virtual_file(path) {}
 
 virtual_file_cache_affinity::~virtual_file_cache_affinity() {
-  for (int i = 0; i < this->ncores; i++) {
-    delete[] this->cores[i].local_refcounts;
+  for (auto &c : this->cores) {
+    delete[] c.local_refcounts;
   }
-  delete[] this->cores;
+}
+
+/**
+ * @note
+ * Space overhead: O(C * N)
+ * - C: Number of cores
+ * - N: Number of pages
+ */
+void virtual_file_cache_affinity::setup_hook() {
+  const int id = thread_id;
+  size_t space = roundup(this->get_capacity(), CACHE_LINE_SIZE);
+  this->cores.emplace_back();
+  this->cores[id].local_refcounts = new int[space]{0};
 }
 
 /**
@@ -47,9 +28,8 @@ virtual_file_cache_affinity::~virtual_file_cache_affinity() {
  * Counting overhead: Low (No cacheline bouncing)
  */
 int virtual_file_cache_affinity::ref(off_t bn) {
-  // WARN: Core of the thread must be fixed!
-  int cpuid = get_cpuid();
-  int *refcounts = this->cores[cpuid].local_refcounts;
+  int id = this->thread_id;
+  int *refcounts = this->cores[id].local_refcounts;
   int old = refcounts[bn];
   refcounts[bn] = old + 1;
   return old;
@@ -60,14 +40,12 @@ int virtual_file_cache_affinity::ref(off_t bn) {
  * Counting overhead: Low (No cacheline bouncing)
  */
 int virtual_file_cache_affinity::unref(off_t bn) {
-  // WARN: Core of the thread must be fixed!
-  int cpuid = get_cpuid();
-  int *refcounts = this->cores[cpuid].local_refcounts;
+  int id = this->thread_id;
+  int *refcounts = this->cores[id].local_refcounts;
   int old = refcounts[bn];
   refcounts[bn] = old - 1;
   return old;
 }
-
 
 /**
  * @note
@@ -75,10 +53,9 @@ int virtual_file_cache_affinity::unref(off_t bn) {
  * - C: Number of cores
  */
 int virtual_file_cache_affinity::query(off_t bn) {
-  int refcount = this->pages[bn]._refcount;
-  for (int i = 0; i < this->ncores; i++) {
-    int *refcounts = this->cores[i].local_refcounts;
-    refcount += refcounts[bn];
+  int refcount = this->pages[bn].refcount;
+  for (auto &c : this->cores) {
+    refcount += c.local_refcounts[bn];
   }
   return refcount;
 }

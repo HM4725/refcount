@@ -3,11 +3,11 @@
 #include <stdio.h>
 #include <thread>
 #include <vector>
-#include "virtual_file_nonatomic.h"
+#include "virtual_file_refcache.h"
 
-using vfs_type = virtual_file_nonatomic;
+using vfs_type = virtual_file_refcache;
 
-class VFSNonatomicTest : public testing::Test {
+class VFSRefcacheTest : public testing::Test {
  protected:
   void SetUp() override {
     int fd = open(path, O_RDWR | O_CREAT | O_SYNC, 0644);
@@ -26,9 +26,9 @@ class VFSNonatomicTest : public testing::Test {
 
   static const char *path;
 };
-const char *VFSNonatomicTest::path = "test.db";
+const char *VFSRefcacheTest::path = "test.db";
 
-TEST_F(VFSNonatomicTest, DRBMQuery) {
+TEST_F(VFSRefcacheTest, DRBMQuery) {
   vfs_type file(path);
   std::vector<std::thread> threads;
   constexpr long NTHREADS = 10;
@@ -61,7 +61,7 @@ TEST_F(VFSNonatomicTest, DRBMQuery) {
   }
 };
 
-TEST_F(VFSNonatomicTest, DRBHQuery) {
+TEST_F(VFSRefcacheTest, DRBHQuery) {
   vfs_type file(path);
   std::vector<std::thread> threads;
   constexpr long NTHREADS = 10;

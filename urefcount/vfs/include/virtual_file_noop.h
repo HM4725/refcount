@@ -1,5 +1,4 @@
-#ifndef __VIRTUAL_FILE_NOOP_H__
-#define __VIRTUAL_FILE_NOOP_H__
+#pragma once
 
 #include "virtual_file.h"
 
@@ -12,5 +11,3 @@ class virtual_file_noop : public virtual_file {
   virtual_file_noop(const char *path) : virtual_file(path) {}
   int query(off_t bn) override;
 };
-
-#endif /* __VIRTUAL_FILE_NOOP_H__ */
