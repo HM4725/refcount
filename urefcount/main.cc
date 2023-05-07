@@ -113,10 +113,10 @@ int main() {
   std::cout << "N,iters,type" << std::endl;
 
   for (int n = 1; n <= NCORES; n++) {
-    // bench<virtual_file>(n, logger);
-    // bench<virtual_file_noop>(n, logger);
-    // bench<virtual_file_nonatomic>(n, logger);
-    // bench<virtual_file_cache_affinity>(n, logger);
+    bench<virtual_file>(n, logger);
+    bench<virtual_file_noop>(n, logger);
+    bench<virtual_file_nonatomic>(n, logger);
+    bench<virtual_file_cache_affinity>(n, logger);
     bench<virtual_file_refcache>(n, logger);
   }
 
