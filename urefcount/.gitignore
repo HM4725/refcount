@@ -1,3 +1,8 @@
 build/
 .vscode/
 .DS_store
+
+# Results
+*.db
+*.csv
+*.png
