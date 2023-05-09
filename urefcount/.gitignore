@@ -1,3 +1,14 @@
+# Build
 build/
+release/
+debug/
+
+# IDE
 .vscode/
+
+# MacOS
 .DS_store
+
+# Results
+*.csv
+*.png
