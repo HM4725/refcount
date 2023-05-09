@@ -1,18 +1,20 @@
 # User reference count
-
-## Build
+## Getting Started
+### Build (benchmark)
 ```sh
 cmake -B build .
-cd build
-make -j
+cmake --build ./build
+```
+### Installation (plotter)
+```sh
+pip install -r requirements.txt
 ```
 ## Run benchmark
 ```sh
-./bin/urefcount_benchmark
+./build/bin/urefcount_benchmark
 ```
-## Log file
+### Log file
 `log.csv`
-### Example
 ```
 N,iters,type
 1,12574066,virtual_file
@@ -26,4 +28,8 @@ N,iters,type
 2,25610319,virtual_file_cache_affinity
 2,19756109,virtual_file_refcache
 ...
+```
+### Plot
+```sh
+python3 plotter.py --log=log.csv --output=result.png
 ```

@@ -10,5 +10,6 @@ debug/
 .DS_store
 
 # Results
+*.db
 *.csv
 *.png
