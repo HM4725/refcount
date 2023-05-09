@@ -3,11 +3,11 @@
 #include <stdio.h>
 #include <thread>
 #include <vector>
-#include "virtual_file_nonatomic.h"
+#include "virtual_file_cache_affinity.h"
 
-using vfs_type = virtual_file_nonatomic;
+using vfs_type = virtual_file_cache_affinity;
 
-class VFSNonatomicTest : public testing::Test {
+class VFSCacheAffinityTest : public testing::Test {
  protected:
   void SetUp() override {
     int fd = open(path, O_RDWR | O_CREAT | O_SYNC, 0644);
@@ -26,13 +26,14 @@ class VFSNonatomicTest : public testing::Test {
 
   static const char *path;
 };
-const char *VFSNonatomicTest::path = "test.db";
+const char *VFSCacheAffinityTest::path = "test.db";
 
-TEST_F(VFSNonatomicTest, DRBMQuery) {
+TEST_F(VFSCacheAffinityTest, DRBMQuery) {
+  const unsigned int NTHREADS = std::thread::hardware_concurrency();
+  constexpr int NITERS = 10;
+
   vfs_type file(path);
   std::vector<std::thread> threads;
-  constexpr long NTHREADS = 10;
-  constexpr int NITERS = 1000;
 
   // Multi Readers
   for (long i = 0; i < NTHREADS; i++) {
@@ -61,11 +62,12 @@ TEST_F(VFSNonatomicTest, DRBMQuery) {
   }
 };
 
-TEST_F(VFSNonatomicTest, DRBHQuery) {
+TEST_F(VFSCacheAffinityTest, DRBHQuery) {
+  const unsigned int NTHREADS = std::thread::hardware_concurrency();
+  constexpr int NITERS = 10;
+
   vfs_type file(path);
   std::vector<std::thread> threads;
-  constexpr long NTHREADS = 10;
-  constexpr int NITERS = 1000;
 
   // Multi Readers
   for (long i = 0; i < NTHREADS; i++) {

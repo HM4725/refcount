@@ -7,36 +7,36 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include "params.h"
 #include "utils.h"
 
 virtual_file::virtual_file(const char *path) {
   int fd = open(path, O_RDWR | O_CREAT | O_SYNC, 0644);
+  size_t capacity;
   this->fd = fd;
   off_t size = lseek(fd, 0, SEEK_END);
   if (size == 0) {
-    ftruncate(fd, this->BLOCK_SZ * this->BLOCK_DEFAULT_NUM);
-    this->capacity = this->BLOCK_DEFAULT_NUM;
+    ftruncate(fd, BLOCK_SIZE * this->DEFAULT_BLOCK_NUM);
+    capacity = this->DEFAULT_BLOCK_NUM;
   } else {
-    this->capacity = (size + this->BLOCK_SZ - 1) / this->BLOCK_SZ;
+    capacity = (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
   }
-  this->cache = new block[this->capacity];
-  this->pages = new page[this->capacity];
+  for (long i = 0; i < capacity; i++) {
+    this->buffer.emplace_back();
+    this->pages.emplace_back();
+  }
 }
 
-virtual_file::~virtual_file() {
-  delete[] this->pages;
-  delete[] this->cache;
-  close(this->fd);
-}
+virtual_file::~virtual_file() { close(this->fd); }
 
 ssize_t virtual_file::read(void *buf, size_t nbytes, off_t offset) {
   // caching
-  off_t bn_begin = offset / this->BLOCK_SZ;
-  off_t bn_end = (offset + nbytes + this->BLOCK_SZ - 1) / this->BLOCK_SZ;
+  off_t bn_begin = offset / BLOCK_SIZE;
+  off_t bn_end = (offset + nbytes + BLOCK_SIZE - 1) / BLOCK_SIZE;
   for (off_t bn = bn_begin; bn < bn_end; bn++) {
-    if (this->pages[bn].cached == false) {
-      pread(this->fd, &this->cache[bn], this->BLOCK_SZ, bn * this->BLOCK_SZ);
-      this->pages[bn].cached = true;
+    if (this->pages[bn].active == false) {
+      pread(this->fd, &this->buffer[bn].data, BLOCK_SIZE, bn * BLOCK_SIZE);
+      this->pages[bn].active = true;
     }
   }
 
@@ -45,7 +45,7 @@ ssize_t virtual_file::read(void *buf, size_t nbytes, off_t offset) {
   char *_buf = (char *)buf;
   off_t fp = offset;
   while (fp < offset + nbytes) {
-    size_t _nbytes = min(this->BLOCK_SZ - (fp % this->BLOCK_SZ), nbytes - res);
+    size_t _nbytes = min(BLOCK_SIZE - (fp % BLOCK_SIZE), nbytes - res);
     ssize_t res_block = read_block(_buf, _nbytes, fp);
     _buf += res_block;
     fp += res_block;
@@ -55,27 +55,25 @@ ssize_t virtual_file::read(void *buf, size_t nbytes, off_t offset) {
 }
 
 ssize_t virtual_file::read_block(void *buf, size_t nbytes, off_t offset) {
-  off_t bn = offset / this->BLOCK_SZ;
-  off_t off = offset % this->BLOCK_SZ;
-  assert(nbytes <= this->BLOCK_SZ);
-  assert(bn < this->capacity);
+  off_t bn = offset / BLOCK_SIZE;
+  off_t off = offset % BLOCK_SIZE;
+  assert(nbytes <= BLOCK_SIZE);
+  assert(bn < this->buffer.size());
 
   this->ref(bn);
-  memcpy(buf, &this->cache[bn].d[off], nbytes);
+  memcpy(buf, &this->buffer[bn].data[off], nbytes);
   this->unref(bn);
   return nbytes;
 }
 
+size_t virtual_file::get_capacity() const { return this->buffer.size(); }
+
 int virtual_file::ref(off_t bn) {
-  int old = __sync_fetch_and_add(&this->pages[bn]._refcount, 1);
-  return old;
+  return this->pages[bn].refcount.fetch_add(1);
 }
 
 int virtual_file::unref(off_t bn) {
-  int old = __sync_fetch_and_sub(&this->pages[bn]._refcount, 1);
-  return old;
+  return this->pages[bn].refcount.fetch_sub(1);
 }
 
-int virtual_file::query(off_t bn) {
-  return this->pages[bn]._refcount;
-}
+int virtual_file::query(off_t bn) { return this->pages[bn].refcount.load(); }
