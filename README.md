@@ -2,7 +2,7 @@
 This is a graduation project with [DBOS Lab, HYU](http://dbos.hanyang.ac.kr/).
 
 ## Abstract
-The current Linux file system does not have good performance scalability in a multi-core environment, and performance deteriorates as the number of cores increases. One of the causes of this problem is the reference count, improving the multicore performance scalability of the Linux file system.
+The current Linux file system does not have good performance scalability in a multi-core environment, and performance deteriorates as the number of cores increases. One of the causes of this problem is the reference count. And there are many algorithms to solve it. Our goal is to improve the multi-core preformance scalability of the Linux file system with them.
 
 ## 1) Background
 ### 1.1 In-memory File System
