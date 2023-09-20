@@ -1,3 +1,6 @@
 [submodule "krefcount/test/fxmark"]
 	path = krefcount/test/fxmark
 	url = https://github.com/HM4725/fxmark.git
+[submodule "krefcount/ucounting"]
+	path = krefcount/ucounting
+	url = https://github.com/HM4725/fxmark.git
