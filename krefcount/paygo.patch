@@ -1,0 +1,772 @@
+diff --git a/include/linux/mm_types.h b/include/linux/mm_types.h
+index 9757067c3..c5b5a7a78 100644
+--- a/include/linux/mm_types.h
++++ b/include/linux/mm_types.h
+@@ -217,6 +217,7 @@ struct page {
+ 
+ 	/* Usage count. *DO NOT USE DIRECTLY*. See page_ref.h */
+ 	atomic_t _refcount;
++	atomic_t _group;
+ 
+ #ifdef CONFIG_MEMCG
+ 	unsigned long memcg_data;
+@@ -347,6 +348,7 @@ struct folio {
+ 			void *private;
+ 			atomic_t _mapcount;
+ 			atomic_t _refcount;
++			atomic_t _group;
+ #ifdef CONFIG_MEMCG
+ 			unsigned long memcg_data;
+ #endif
+@@ -392,6 +394,7 @@ FOLIO_MATCH(index, index);
+ FOLIO_MATCH(private, private);
+ FOLIO_MATCH(_mapcount, _mapcount);
+ FOLIO_MATCH(_refcount, _refcount);
++FOLIO_MATCH(_group, _group);
+ #ifdef CONFIG_MEMCG
+ FOLIO_MATCH(memcg_data, memcg_data);
+ #endif
+diff --git a/include/linux/page-flags.h b/include/linux/page-flags.h
+index 69e93a0c1..b93b0e3f1 100644
+--- a/include/linux/page-flags.h
++++ b/include/linux/page-flags.h
+@@ -119,6 +119,8 @@ enum pageflags {
+ 	PG_reclaim,		/* To be reclaimed asap */
+ 	PG_swapbacked,		/* Page is backed by RAM/swap */
+ 	PG_unevictable,		/* Page is "unevictable"  */
++	PG_distributed,		/* Refcount is distributed */
++	PG_readall,		/* Someone is reading distributed refcount */
+ #ifdef CONFIG_MMU
+ 	PG_mlocked,		/* Page is vma mlocked */
+ #endif
+@@ -613,6 +615,11 @@ PAGEFLAG(VmemmapSelfHosted, vmemmap_self_hosted, PF_ANY)
+ PAGEFLAG_FALSE(VmemmapSelfHosted, vmemmap_self_hosted)
+ #endif
+ 
++PAGEFLAG(Distributed, distributed, PF_NO_COMPOUND)
++	TESTCLEARFLAG(Distributed, distributed, PF_NO_COMPOUND)
++PAGEFLAG(Readall, readall, PF_NO_COMPOUND)
++	TESTCLEARFLAG(Readall, readall, PF_NO_COMPOUND)
++
+ /*
+  * On an anonymous page mapped into a user virtual memory area,
+  * page->mapping points to its anon_vma, not to a struct address_space;
+diff --git a/include/linux/paygo.h b/include/linux/paygo.h
+new file mode 100644
+index 000000000..9af4b15b6
+--- /dev/null
++++ b/include/linux/paygo.h
+@@ -0,0 +1,80 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef _LINUX_PAYGO_H
++#define _LINUX_PAYGO_H
++
++#include <linux/list.h>
++#include <linux/spinlock.h>
++#include <linux/hash.h>
++#include <linux/smp.h>
++#include <linux/mm_types.h>
++
++#include <asm/atomic.h>
++
++#define TABLESIZE (1024)
++#define HASHSHIFT (11)
++
++#define PAYGO_CREATE 1
++#define PAYGO_EXIST 2
++#define PAYGO_COLLISION 3
++#define PAYGO_CRASH -1
++
++struct paygo_entry {
++	void *obj;
++	int local_counter;
++	atomic_t anchor_counter;
++	struct list_head list;
++} ____cacheline_aligned_in_smp;
++
++struct overflow {
++	spinlock_t lock;
++	struct list_head head;
++};
++
++struct paygo {
++	struct paygo_entry entries[TABLESIZE];
++	struct overflow overflow_lists[TABLESIZE];
++};
++
++void init_paygo_table(void);
++int paygo_inc(struct folio *);
++int paygo_dec(struct folio *);
++int paygo_read(struct folio *);
++
++static inline unsigned long hash_function(const void *obj)
++{
++	return hash_64((unsigned long)obj, HASHSHIFT) % TABLESIZE;
++}
++
++#define GROUP_SHIFT (1)
++#define GROUP_BITMASK ((1 << GROUP_SHIFT) - 1)
++
++static inline int paygo_gid(int cpu)
++{
++	BUG_ON((num_possible_cpus() >> GROUP_SHIFT) > (sizeof(atomic_t) * 8));
++	return cpu >> GROUP_SHIFT;
++}
++
++static inline int paygo_gtail(int cpu)
++{
++	return cpu | GROUP_BITMASK;
++}
++
++static inline int paygo_test_group(int cpu, struct folio *folio)
++{
++	int gid = paygo_gid(cpu);
++	return (atomic_read(&folio->_group) & (1 << gid)) != 0;
++}
++
++static inline void paygo_set_group(int cpu, struct folio *folio)
++{
++	int gid = paygo_gid(cpu);
++	atomic_fetch_or(1 << gid, &folio->_group);
++}
++
++static inline void paygo_clear_group(int cpu, struct folio *folio)
++{
++	int gid = paygo_gid(cpu);
++	atomic_fetch_andnot(1 << gid, &folio->_group);
++}
++
++#endif /* _LINUX_PAYGO_H */
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index 853d08f75..e0838b2b9 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -734,6 +734,12 @@ struct kmap_ctrl {
+ #endif
+ };
+ 
++struct anchor_info {
++	int				cpu;
++	void				*obj;
++	struct list_head		list;
++};
++
+ struct task_struct {
+ #ifdef CONFIG_THREAD_INFO_IN_TASK
+ 	/*
+@@ -748,6 +754,7 @@ struct task_struct {
+ 	/* saved state for "spinlock sleepers" */
+ 	unsigned int			saved_state;
+ #endif
++	struct list_head		anchor_info_list;
+ 
+ 	/*
+ 	 * This begins the randomizable portion of task_struct. Only
+diff --git a/include/trace/events/mmflags.h b/include/trace/events/mmflags.h
+index 412b5a463..be954e74c 100644
+--- a/include/trace/events/mmflags.h
++++ b/include/trace/events/mmflags.h
+@@ -124,7 +124,9 @@
+ 	{1UL << PG_mappedtodisk,	"mappedtodisk"	},		\
+ 	{1UL << PG_reclaim,		"reclaim"	},		\
+ 	{1UL << PG_swapbacked,		"swapbacked"	},		\
+-	{1UL << PG_unevictable,		"unevictable"	}		\
++	{1UL << PG_unevictable,		"unevictable"	},		\
++	{1UL << PG_distributed,		"distributed"	},		\
++	{1UL << PG_readall,		"readall"	}		\
+ IF_HAVE_PG_MLOCK(PG_mlocked,		"mlocked"	)		\
+ IF_HAVE_PG_UNCACHED(PG_uncached,	"uncached"	)		\
+ IF_HAVE_PG_HWPOISON(PG_hwpoison,	"hwpoison"	)		\
+diff --git a/include/uapi/linux/fadvise.h b/include/uapi/linux/fadvise.h
+index 0862b8743..a0ac0fe55 100644
+--- a/include/uapi/linux/fadvise.h
++++ b/include/uapi/linux/fadvise.h
+@@ -19,4 +19,6 @@
+ #define POSIX_FADV_NOREUSE	5 /* Data will be accessed once.  */
+ #endif
+ 
++#define PAYGO_FADV_HOTSECT	8 /* Reference count is distributed.  */
++
+ #endif	/* FADVISE_H_INCLUDED */
+diff --git a/init/init_task.c b/init/init_task.c
+index ff6c4b9bf..0eb4ea518 100644
+--- a/init/init_task.c
++++ b/init/init_task.c
+@@ -71,6 +71,7 @@ struct task_struct init_task
+ 	.thread_info	= INIT_THREAD_INFO(init_task),
+ 	.stack_refcount	= REFCOUNT_INIT(1),
+ #endif
++	.anchor_info_list = LIST_HEAD_INIT(init_task.anchor_info_list),
+ 	.__state	= 0,
+ 	.stack		= init_stack,
+ 	.usage		= REFCOUNT_INIT(2),
+diff --git a/kernel/fork.c b/kernel/fork.c
+index 9f7fe3541..4793200d9 100644
+--- a/kernel/fork.c
++++ b/kernel/fork.c
+@@ -2147,6 +2147,7 @@ static __latent_entropy struct task_struct *copy_process(
+ 	delayacct_tsk_init(p);	/* Must remain after dup_task_struct() */
+ 	p->flags &= ~(PF_SUPERPRIV | PF_WQ_WORKER | PF_IDLE | PF_NO_SETAFFINITY);
+ 	p->flags |= PF_FORKNOEXEC;
++	INIT_LIST_HEAD(&p->anchor_info_list);
+ 	INIT_LIST_HEAD(&p->children);
+ 	INIT_LIST_HEAD(&p->sibling);
+ 	rcu_copy_process(p);
+diff --git a/mm/Makefile b/mm/Makefile
+index 8e105e5b3..f2bc17f15 100644
+--- a/mm/Makefile
++++ b/mm/Makefile
+@@ -54,6 +54,7 @@ obj-y			:= filemap.o mempool.o oom_kill.o fadvise.o \
+ 			   mm_init.o percpu.o slab_common.o \
+ 			   compaction.o \
+ 			   interval_tree.o list_lru.o workingset.o \
++			   page_refcount.o paygo.o \
+ 			   debug.o gup.o mmap_lock.o $(mmu-y)
+ 
+ # Give 'page_alloc' its own module-parameter namespace
+diff --git a/mm/fadvise.c b/mm/fadvise.c
+index bf04fec87..f8c73b7d6 100644
+--- a/mm/fadvise.c
++++ b/mm/fadvise.c
+@@ -170,6 +170,11 @@ int generic_fadvise(struct file *file, loff_t offset, loff_t len, int advice)
+ 			}
+ 		}
+ 		break;
++	case PAYGO_FADV_HOTSECT:
++		start_index = offset >> PAGE_SHIFT;
++		end_index = endbyte >> PAGE_SHIFT;
++		do_distribute_refcount(inode, mapping, start_index, end_index);
++		break;
+ 	default:
+ 		return -EINVAL;
+ 	}
+diff --git a/mm/filemap.c b/mm/filemap.c
+index 0e20a8d6d..63c95f1dd 100644
+--- a/mm/filemap.c
++++ b/mm/filemap.c
+@@ -42,6 +42,7 @@
+ #include <linux/ramfs.h>
+ #include <linux/page_idle.h>
+ #include <linux/migrate.h>
++#include <linux/paygo.h>
+ #include <asm/pgalloc.h>
+ #include <asm/tlbflush.h>
+ #include "internal.h"
+@@ -1039,6 +1040,7 @@ void __init pagecache_init(void)
+ 		init_waitqueue_head(&folio_wait_table[i]);
+ 
+ 	page_writeback_init();
++	init_paygo_table();
+ }
+ 
+ /*
+@@ -2384,8 +2386,17 @@ static void filemap_get_read_batch(struct address_space *mapping,
+ 			break;
+ 		if (xa_is_sibling(folio))
+ 			break;
+-		if (!folio_try_get_rcu(folio))
+-			goto retry;
++
++		if (folio_test_distributed(folio)) {
++			paygo_inc(folio);
++			if (folio_ref_count(folio) == 0)
++				goto put_folio;
++			if (folio_test_readall(folio))
++				goto put_folio;
++		} else {
++			if (!folio_try_get_rcu(folio))
++				goto retry;
++		}
+ 
+ 		if (unlikely(folio != xas_reload(&xas)))
+ 			goto put_folio;
+@@ -2399,7 +2410,10 @@ static void filemap_get_read_batch(struct address_space *mapping,
+ 		xas_advance(&xas, folio->index + folio_nr_pages(folio) - 1);
+ 		continue;
+ put_folio:
+-		folio_put(folio);
++		if (folio_test_distributed(folio))
++			paygo_dec(folio);
++		else
++			folio_put(folio);
+ retry:
+ 		xas_reset(&xas);
+ 	}
+@@ -2755,8 +2769,13 @@ ssize_t filemap_read(struct kiocb *iocb, struct iov_iter *iter,
+ 			}
+ 		}
+ put_folios:
+-		for (i = 0; i < folio_batch_count(&fbatch); i++)
+-			folio_put(fbatch.folios[i]);
++		for (i = 0; i < folio_batch_count(&fbatch); i++) {
++			struct folio *folio = fbatch.folios[i];
++			if (folio_test_distributed(folio))
++				paygo_dec(folio);
++			else
++				folio_put(folio);
++		}
+ 		folio_batch_init(&fbatch);
+ 	} while (iov_iter_count(iter) && iocb->ki_pos < isize && !error);
+ 
+diff --git a/mm/internal.h b/mm/internal.h
+index bcf75a8b0..60183187c 100644
+--- a/mm/internal.h
++++ b/mm/internal.h
+@@ -117,6 +117,8 @@ bool truncate_inode_partial_folio(struct folio *folio, loff_t start,
+ long invalidate_inode_page(struct page *page);
+ unsigned long invalidate_mapping_pagevec(struct address_space *mapping,
+ 		pgoff_t start, pgoff_t end, unsigned long *nr_pagevec);
++long do_distribute_refcount(struct inode *inode, struct address_space *mapping,
++		pgoff_t start, pgoff_t end);
+ 
+ /**
+  * folio_evictable - Test whether a folio is evictable.
+diff --git a/mm/page_refcount.c b/mm/page_refcount.c
+new file mode 100644
+index 000000000..887c6eea0
+--- /dev/null
++++ b/mm/page_refcount.c
+@@ -0,0 +1,46 @@
++#include <linux/syscalls.h>
++#include <linux/mm.h>
++#include <linux/pagevec.h>
++
++#include "internal.h"
++
++static int dm_manage(struct inode *inode, struct folio *folio)
++{
++	/*
++	 * TODO: inode->dm_pages.load(folio);
++	 * It prevents memory leaks.
++	 * Recommend to use XArray.
++	 */
++	return 0;
++}
++
++long do_distribute_refcount(struct inode *inode, struct address_space *mapping,
++			    pgoff_t start, pgoff_t end)
++{
++	struct folio *folio;
++	struct folio_batch fbatch;
++	pgoff_t indices[PAGEVEC_SIZE];
++	pgoff_t index;
++	unsigned long nrpages = 0;
++	int i;
++
++	folio_batch_init(&fbatch);
++	index = start;
++	while (index <= end &&
++	       find_lock_entries(mapping, &index, end, &fbatch, indices)) {
++		for (i = 0; i < folio_batch_count(&fbatch); i++) {
++			folio = fbatch.folios[i];
++			if (folio_test_distributed(folio)) {
++				folio_unlock(folio);
++				folio_put(folio);
++			} else {
++				dm_manage(inode, folio);
++				folio_set_distributed(folio);
++				folio_unlock(folio);
++			}
++			nrpages++;
++		}
++		folio_batch_init(&fbatch);
++	}
++	return nrpages;
++}
+diff --git a/mm/paygo.c b/mm/paygo.c
+new file mode 100644
+index 000000000..6daf8b459
+--- /dev/null
++++ b/mm/paygo.c
+@@ -0,0 +1,342 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Paygo reference counting
++ *
++ * Copyright (C) 2023 Hanyang, Univ. Kun-wook Park, Hyeon-min Lee
++ */
++
++#include <linux/paygo.h>
++#include <linux/percpu.h>
++#include <linux/list.h>
++#include <linux/hashtable.h>
++#include <linux/spinlock.h>
++#include <linux/percpu.h>
++#include <linux/slab.h>
++#include <asm/atomic.h>
++#include <linux/hash.h>
++#include <linux/sched.h>
++
++static DEFINE_PER_CPU(struct paygo *, paygo_table_ptr);
++
++static int push_hash(void *obj)
++{
++	unsigned long hash;
++	struct paygo_entry *entry;
++	struct overflow *ovfl;
++	struct paygo *p = per_cpu(paygo_table_ptr, smp_processor_id());
++
++	hash = hash_function(obj);
++	entry = &p->entries[hash];
++
++	if (entry->obj == NULL) {
++		entry->obj = obj;
++		entry->local_counter = 1;
++		atomic_set(&entry->anchor_counter, 0);
++		return PAYGO_CREATE;
++	} else {
++		struct paygo_entry *new_entry;
++		ovfl = &p->overflow_lists[hash];
++		new_entry = kzalloc(sizeof(struct paygo_entry), GFP_ATOMIC);
++		if (!new_entry) {
++			return -ENOMEM;
++		}
++		new_entry->obj = obj;
++		new_entry->local_counter = 1;
++		atomic_set(&new_entry->anchor_counter, 0);
++
++		spin_lock(&ovfl->lock);
++		list_add(&new_entry->list, &ovfl->head);
++		spin_unlock(&ovfl->lock);
++		return PAYGO_COLLISION;
++	}
++}
++
++static struct paygo_entry *find_hash(void *obj)
++{
++	int cpu;
++	unsigned long hash;
++	struct paygo_entry *entry;
++	struct overflow *ovfl;
++	struct list_head *pos, *n;
++	struct paygo *p;
++	cpu = smp_processor_id();
++	p = per_cpu(paygo_table_ptr, cpu);
++
++	hash = hash_function(obj);
++	entry = &p->entries[hash];
++
++redo:
++	if (likely(entry->obj == obj)) {
++		return entry;
++	} else {
++		ovfl = &p->overflow_lists[hash];
++		spin_lock(&ovfl->lock);
++		if (unlikely(entry->local_counter +
++				     atomic_read(&(entry->anchor_counter)) ==
++			     0)) {
++			struct paygo_entry *new_entry;
++			if (!list_empty(&ovfl->head)) {
++				new_entry = list_first_entry(
++					&ovfl->head, struct paygo_entry, list);
++				*entry = *new_entry;
++				list_del(&new_entry->list);
++				kfree(new_entry);
++				spin_unlock(&ovfl->lock);
++				/*
++				 * We need to redo and check
++				 * 1. Whether a new entry in the hashtable is what we were looking for
++				 * 2. Whether the overflow list is emtpy
++				 */
++				goto redo;
++			} else {
++				entry->obj = NULL;
++				entry->local_counter = 0;
++				atomic_set(&(entry->anchor_counter), 0);
++
++				spin_unlock(&ovfl->lock);
++				return NULL;
++			}
++		}
++
++		/*
++		 * The entry of hashtable is not the entry that we are looking for.
++		 * So we need to search overflow list.
++		 */
++		list_for_each_safe(pos, n, &ovfl->head) {
++			struct paygo_entry *ovfl_entry =
++				list_entry(pos, struct paygo_entry, list);
++
++			if (ovfl_entry->obj == obj) {
++				spin_unlock(&ovfl->lock);
++				return ovfl_entry;
++			}
++		}
++		spin_unlock(&ovfl->lock);
++	}
++
++	return NULL;
++}
++
++static void record_anchor(int cpu, void *obj)
++{
++	struct anchor_info *info;
++	info = kmalloc(sizeof(struct anchor_info), GFP_KERNEL);
++	if (!info) {
++		pr_err("Failed to allocate memory for anchor_info\n");
++		return;
++	}
++	info->cpu = cpu;
++	info->obj = obj;
++	list_add_tail(&info->list, &current->anchor_info_list);
++}
++
++static int unrecord_anchor(void *obj)
++{
++	struct anchor_info *info;
++	int cpu = -1;
++
++	list_for_each_entry_reverse(info, &current->anchor_info_list, list) {
++		if (info->obj == obj) {
++			cpu = info->cpu;
++			list_del(&info->list);
++			kfree(info);
++			break;
++		}
++	}
++
++	/*
++	 * Since all of the unref operations are always followed by ref operations,
++	 * there is no situation where anchor information list is empty.
++	 */
++	if (cpu == -1) {
++		pr_err("Failed to find anchor_info with given obj\n");
++	}
++
++	return cpu;
++}
++
++static void dec_other_entry(void *obj, int cpu)
++{
++	unsigned long hash;
++	struct overflow *ovfl;
++	struct list_head *pos, *n;
++	struct paygo *p;
++
++	hash = hash_function(obj);
++	p = per_cpu(paygo_table_ptr, cpu);
++
++	/*
++	 * If the entry which we are looking for doesn't exist in the overflow list,
++	 * we should try again. Because the owner of the hash table may have moved
++	 * the entry from that overflow list to the hash table.
++	 */
++retry:
++	if (p->entries[hash].obj == obj) {
++		atomic_dec(&p->entries[hash].anchor_counter);
++	} else {
++		ovfl = &p->overflow_lists[hash];
++		spin_lock(&ovfl->lock);
++		list_for_each_safe(pos, n, &ovfl->head) {
++			struct paygo_entry *ovfl_entry =
++				list_entry(pos, struct paygo_entry, list);
++			if (likely(ovfl_entry->obj == obj)) {
++				atomic_dec(&ovfl_entry->anchor_counter);
++				spin_unlock(&ovfl->lock);
++				return;
++			}
++		}
++		spin_unlock(&ovfl->lock);
++		goto retry;
++	}
++}
++
++void __init init_paygo_table(void)
++{
++	int cpu;
++	struct paygo *p;
++
++	for_each_possible_cpu(cpu) {
++		p = kzalloc(sizeof(struct paygo), GFP_KERNEL);
++		if (!p) {
++			pr_err("Failed to allocate paygo table for CPU %d\n",
++			       cpu);
++			continue;
++		}
++
++		per_cpu(paygo_table_ptr, cpu) = p;
++
++		for (int j = 0; j < TABLESIZE; j++) {
++			p->entries[j].obj = NULL;
++			p->entries[j].local_counter = 0;
++			atomic_set(&p->entries[j].anchor_counter, 0);
++			spin_lock_init(&p->overflow_lists[j].lock);
++			INIT_LIST_HEAD(&p->overflow_lists[j].head);
++		}
++	}
++}
++
++int paygo_inc(struct folio *folio)
++{
++	int cpu;
++	int ret;
++	struct paygo_entry *entry;
++	cpu = get_cpu();
++
++	entry = find_hash(folio);
++	if (entry) {
++		entry->local_counter += 1;
++		record_anchor(cpu, folio);
++		put_cpu();
++		return PAYGO_EXIST;
++	}
++
++	ret = push_hash(folio);
++	record_anchor(cpu, folio);
++	if (!paygo_test_group(cpu, folio)) {
++		paygo_set_group(cpu, folio);
++	}
++	put_cpu();
++	return ret;
++}
++
++int paygo_dec(struct folio *folio)
++{
++	int cpu;
++	int anchor_cpu;
++	struct paygo_entry *entry;
++	cpu = get_cpu();
++
++	anchor_cpu = unrecord_anchor(folio);
++
++	if (likely(cpu == anchor_cpu)) {
++		entry = find_hash(folio);
++		if (!entry) {
++			pr_info("paygo_dec: NULL return ERR!!!\n");
++			put_cpu();
++			return PAYGO_CRASH;
++		}
++		entry->local_counter -= 1;
++	} else {
++		dec_other_entry(folio, anchor_cpu);
++	}
++	put_cpu();
++	return PAYGO_EXIST;
++}
++
++int paygo_read(struct folio *folio)
++{
++	int mycpu;
++	int cur_cpu;
++	unsigned long hash;
++	struct paygo *p;
++	struct overflow *ovfl;
++	struct list_head *pos, *n;
++	struct paygo_entry *entry;
++	int counter = 0;
++
++	mycpu = get_cpu();
++	hash = hash_function(folio);
++
++	for_each_possible_cpu(cur_cpu) {
++		if (!paygo_test_group(cur_cpu, folio))
++			continue;
++
++		p = per_cpu(paygo_table_ptr, cur_cpu);
++		if (unlikely(mycpu == cur_cpu)) {
++			entry = find_hash(folio);
++			if (entry) {
++				counter = entry->local_counter +
++					  atomic_read(&entry->anchor_counter);
++				if (counter)
++					goto finish;
++			}
++		} else {
++			/*
++			 * Unlike dec_other, paygo_read doesn't guarantee that there is
++			 * an entry in the hashtable or the overflow list.
++			 * Therefore, we must prevent the hashtable's owner from
++			 * removing a entry from the overflow list and adding it to
++			 * the hashtable.
++			 */
++			ovfl = &p->overflow_lists[hash];
++			spin_lock(&ovfl->lock);
++
++			entry = &p->entries[hash];
++			if (entry->obj == folio) {
++				counter = entry->local_counter +
++					  atomic_read(&entry->anchor_counter);
++				if (counter) {
++					spin_unlock(&ovfl->lock);
++					goto finish;
++				}
++			} else {
++				list_for_each_safe(pos, n, &ovfl->head) {
++					struct paygo_entry *ovfl_entry =
++						list_entry(pos,
++							   struct paygo_entry,
++							   list);
++					if (ovfl_entry->obj == folio) {
++						counter =
++							ovfl_entry
++								->local_counter +
++							atomic_read(
++								&ovfl_entry
++									 ->anchor_counter);
++						if (counter) {
++							spin_unlock(
++								&ovfl->lock);
++							goto finish;
++						}
++					}
++				}
++			}
++			spin_unlock(&ovfl->lock);
++		}
++		/* Grouping clear point */
++		if (cur_cpu == paygo_gtail(cur_cpu))
++			paygo_clear_group(cur_cpu, folio);
++	}
++finish:
++	put_cpu();
++	return counter;
++}
+diff --git a/mm/truncate.c b/mm/truncate.c
+index 7b4ea4c4a..60654d335 100644
+--- a/mm/truncate.c
++++ b/mm/truncate.c
+@@ -274,7 +274,8 @@ static long mapping_evict_folio(struct address_space *mapping,
+ 		return 0;
+ 	/* The refcount will be elevated if any page in the folio is mapped */
+ 	if (folio_ref_count(folio) >
+-			folio_nr_pages(folio) + folio_has_private(folio) + 1)
++			folio_nr_pages(folio) + folio_has_private(folio)
++			+ folio_test_distributed(folio) + 1)
+ 		return 0;
+ 	if (folio_has_private(folio) && !filemap_release_folio(folio, 0))
+ 		return 0;
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index 5b7b8d4f5..64f2c2539 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -55,6 +55,7 @@
+ #include <linux/ctype.h>
+ #include <linux/debugfs.h>
+ #include <linux/khugepaged.h>
++#include <linux/paygo.h>
+ 
+ #include <asm/tlbflush.h>
+ #include <asm/div64.h>
+@@ -1360,10 +1361,20 @@ static int __remove_mapping(struct address_space *mapping, struct folio *folio,
+ 	 * Note that if the dirty flag is always set via folio_mark_dirty,
+ 	 * and thus under the i_pages lock, then this ordering is not required.
+ 	 */
+-	refcount = 1 + folio_nr_pages(folio);
++	refcount = 1 + folio_nr_pages(folio) + folio_test_distributed(folio);
+ 	if (!folio_ref_freeze(folio, refcount))
+ 		goto cannot_free;
+-	/* note: atomic_cmpxchg in folio_ref_freeze provides the smp_rmb */
++
++	if (folio_test_distributed(folio)) {
++		folio_set_readall(folio);
++		if (paygo_read(folio) > 0) {
++			folio_ref_unfreeze(folio, refcount);
++			folio_clear_readall(folio);
++			goto cannot_free;
++		}
++		folio_clear_readall(folio);
++	}
++	
+ 	if (unlikely(folio_test_dirty(folio))) {
+ 		folio_ref_unfreeze(folio, refcount);
+ 		goto cannot_free;
