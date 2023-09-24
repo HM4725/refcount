@@ -1,5 +1,7 @@
 # User reference count
-## Getting Started
+![Static Badge](https://img.shields.io/badge/cmake-3.22-008FBA)
+
+## 1) Getting Started
 ### Build (benchmark)
 ```sh
 cmake -B build .
@@ -9,11 +11,13 @@ cmake --build ./build
 ```sh
 pip install -r requirements.txt
 ```
-## Run benchmark
+
+## 2) Benchmark
+### Run
 ```sh
 ./build/bin/urefcount_benchmark
 ```
-### Log file
+### Result file
 `log.csv`
 ```
 N,iters,type
@@ -33,3 +37,15 @@ N,iters,type
 ```sh
 python3 plotter.py --log=log.csv --output=result.png
 ```
+
+## 3) Evaluation
+### Our environment
+```
+- 24 cores (12 cores/CPU, 2 sockets)
+    (Intel(R) Xeon(R) CPU E5-2699 v3 @ 2.30GHz)
+- 128GB DRAM
+- Ubuntu 22.04.3 LTS (5.15.0-84-generic)
+```
+
+### Result: result.png
+![result-24cores](./img/result-24cores.jpeg)
