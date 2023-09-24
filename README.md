@@ -20,10 +20,14 @@ However, this in-memory file system has performance limitations in a multi-core 
 
 ## 2) Project
 ![project-flow](./img/project.png)
-1. Implement various refcount alogrithms in user-level
-2. Implement PAYGO in kernel-level (linux-v6.2.0)
+1. Implement various refcount alogrithms in user-level [<kbd>➞</kbd>](./urefcount/README.md)
+2. Implement paygo[3] distribution algorithm in kernel-level [<kbd>➞</kbd>](./krefcount/README.md)
+### Pdf slides
+[download](./refcount-ppt.pdf)
 
 ## 3) References
 [1] [Kernel source linux/include/linux/mm_types.h](https://elixir.bootlin.com/linux/v6.2/source/include/linux/mm_types.h#L35)
 
 [2] [Understanding Manycore Scalability of File Systems](https://taesoo.kim/pubs/2016/min:fxmark.pdf)
+
+[3] [Pay Migration Tax to Homeland: Anchor-based Scalable Reference Counting for Multicores](https://www.usenix.org/system/files/fast19-jung.pdf)
