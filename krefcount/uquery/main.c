@@ -7,10 +7,12 @@
 #include <time.h>
 #include "syscalls.h"
 
-#define NTHREADS (32)
+#ifndef NTHREADS
+	#define NTHREADS (32)
+#endif
 #define SIZE (4096)
 #define NPAGES (1024 * 1024 / 4)
-//#define HOTSECT (SIZE * NPAGES / 100)
+//#define HOTSECT (SIZE * NPAGES)
 #define HOTSECT 0
 
 int fd;
@@ -31,7 +33,6 @@ int main() {
 	pthread_t thid[NTHREADS];
 	int i;
 
-	/* */
 	buf = malloc(SIZE * NPAGES);
 	if ((fd = open("testfile", O_CREAT | O_RDWR, 644)) == -1) {
 		perror("Fail to open");

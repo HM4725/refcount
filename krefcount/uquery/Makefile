@@ -1,5 +1,5 @@
 all:
-	gcc -o fadvise fadvise_thread.c -lpthread
+	gcc -o fadvise main.c -lpthread
 	fallocate -l 1G testfile
 	sync
 
