@@ -9,6 +9,6 @@ You can adjust options above.
 
 ## 2. Run
 ```sh
-sudo bash run.sh | tee log/{output}.log
+sudo bash run.sh | tee logs/{output}.log
 ```
 You can change the output file name.
