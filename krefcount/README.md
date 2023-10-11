@@ -51,11 +51,11 @@ dd if=/dev/zero of=disks/empty.img bs=1M count=10240
 ```
 ### Run guest OS by our kernel
 ```sh
-vi run.sh
+vi run-qemu.sh
 ```
 Before running qemu, adjust the virtual machine options to suit your current system.
 ```sh
-sh ./run.sh
+sh ./run-qemu.sh
 ```
 ```sh
 (in guest)
