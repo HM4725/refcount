@@ -17,7 +17,7 @@ cd linux
 ```
 ### Apply patch
 ```sh
-patch -p1 < ../paygo.patch
+patch -p1 < ../paygo_grouping.patch
 ```
 ### Set config
 ```sh
