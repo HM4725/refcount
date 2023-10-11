@@ -1,15 +1,16 @@
 #!/bin/bash
 
-make > /dev/null;
+fallocate -l 10G testfile;
+sync;
 TIMEFORMAT='%R';
 
 # Initialize variables
-count=10
-nthreads=(1 2 4 8 16 32)
+count=10;
+nthreads=(1 2 4 9 18 27 36);
 
 for c in ${nthreads[@]}; do
 	echo "#threads: $c"
-	gcc -o fadvise -DNTHREADS=$c main.c -lpthread > /dev/null
+	gcc -o fadvise -DNTHREADS=$c main.c -lpthread -D_GNU_SOURCE > /dev/null
 
 	total_time=0
 	# Loop 10 times to run the command and accumulate elapsed times
@@ -33,4 +34,5 @@ for c in ${nthreads[@]}; do
 	echo "Average elapsed time: $average_time seconds"
 done
 
-make clean > /dev/null;
+rm testfile;
+rm fadvise;

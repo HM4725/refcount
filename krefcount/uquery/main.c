@@ -8,37 +8,44 @@
 #include "syscalls.h"
 
 #ifndef NTHREADS
-	#define NTHREADS (32)
+	#define NTHREADS (36)
 #endif
+
+/* default 10GB */
 #define SIZE (4096)
-#define NPAGES (1024 * 1024 / 4)
-//#define HOTSECT (SIZE * NPAGES)
-#define HOTSECT 0
+#define NPAGES (1024 * 1024 / 4 * 10)
+
+#define HOTSECT (SIZE * NPAGES)
+//#define HOTSECT 0
 
 int fd;
 
 void *worker(void *args) {
 	char buf[SIZE];
-	int i;
+	long n;
+	long id = (long)args;
 
-	for (i = 0; i < NPAGES; i++) {
-		pread(fd, buf, SIZE, i * SIZE);
+	setaffinity(id);
+
+	for (n = 0; n < NPAGES; n++) {
+		pread(fd, buf, SIZE, n * SIZE);
 	}
 	return NULL;
 }
 
 int main() {
 	int ret;
-	char *buf;
+	char buf[SIZE] = {0,};
 	pthread_t thid[NTHREADS];
-	int i;
+	long n, i;
 
-	buf = malloc(SIZE * NPAGES);
 	if ((fd = open("testfile", O_CREAT | O_RDWR, 644)) == -1) {
 		perror("Fail to open");
 		exit(1);
 	}
-	ret = read(fd, buf, SIZE * NPAGES); 
+	for (n = 0; n < NPAGES; n++) {
+		ret = pread(fd, buf, SIZE, n * SIZE); 
+	}
 	printf("read result: %d\n", ret);
 	
 #if HOTSECT != 0
@@ -47,13 +54,11 @@ int main() {
 #endif
 
 	for (i = 0; i < NTHREADS; i++) {
-		pthread_create(&thid[i], NULL, worker, NULL);
+		pthread_create(&thid[i], NULL, worker, (void*)i);
 	}
 	for (i = 0; i < NTHREADS; i++) {
 		pthread_join(thid[i], NULL);
 	}
-
-	free(buf);
 
 	close(fd);
 	return 0;
