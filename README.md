@@ -19,7 +19,7 @@ The in-memory file system of Linux maintains pages for files with the reference 
 However, this in-memory file system has performance limitations in a multi-core environment [2]. When the single shared resource is accessed by multiple cores, the resource has to be synchronized in cache-lines. Modern CPUs support the synchronization with MESI protocol. But it causes performance degradation in times. In particular, this limitation becomes more apparent in the Non-Uniformed Memory Access (NUMA) architecture, which uses multiple multi-core CPUs in multiple sockets.
 
 ## 2) Project
-![project-flow](./img/project.png)
+![project-flow](./img/refcount.project.png)
 1. Implement various refcount alogrithms in user-level [<kbd>➞</kbd>](./urefcount/README.md)
 2. Implement paygo[3] distribution algorithm in kernel-level [<kbd>➞</kbd>](./krefcount/README.md)
 ### Pdf slides
